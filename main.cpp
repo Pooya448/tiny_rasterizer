@@ -6,49 +6,48 @@
 
 const TGAColor white = TGAColor(255, 255, 255, 255);
 const TGAColor red = TGAColor(255, 0, 0, 255);
-const int height = 800, width = 800;
+const TGAColor green = TGAColor(0, 255, 0, 255);
+const int height = 200, width = 200;
 
-Model *model = NULL;
+typedef std::vector<Vec2i> Triangle;
 
-void line(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor color)
+std::pair<Vec2i, Vec2i> get_bbox(const Triangle &pts, TGAImage &image)
 {
-    bool steep = false;
-    if (std::abs(y0 - y1) > std::abs(x0 - x1))
+    Vec2i bbox_min = Vec2i(image.get_width() - 1, image.get_height() - 1);
+    Vec2i bbox_max = Vec2i(0, 0);
+    for (int i = 0; i < pts.size(); i++)
     {
-        steep = true;
-        std::swap(x0, y0);
-        std::swap(x1, y1);
+        bbox_min.x = std::max(0, std::min(bbox_min.x, pts[i].x));
+        bbox_min.y = std::max(0, std::min(bbox_min.y, pts[i].y));
+
+        bbox_max.x = std::min(image.get_width() - 1, std::max(bbox_max.x, pts[i].x));
+        bbox_max.y = std::min(image.get_height() - 1, std::max(bbox_max.y, pts[i].y));
     }
 
-    if (x0 > x1)
+    return {bbox_min, bbox_max};
+}
+
+Vec3f barycentric(const Triangle &vertices, Vec2i query_pt)
+{
+    Vec2i AB = vertices[1] - vertices[0];
+    Vec2i AC = vertices[2] - vertices[0];
+    Vec2i PA = vertices[0] - query_pt;
+
+    Vec3f Eq_x = Vec3f(float(AB.x), float(AC.x), float(PA.x));
+    Vec3f Eq_y = Vec3f(float(AB.y), float(AC.y), float(PA.y));
+
+    Vec3f b = Eq_x ^ Eq_y;
+
+    if (std::abs(b.z) < 1)
     {
-        std::swap(x0, x1);
-        std::swap(y0, y1);
+        return Vec3f(-1, 1, 1);
     }
 
-    int dx = x1 - x0;
-    int dy = y1 - y0;
-    float derr = std::abs(dy) * 2;
-    float err = 0;
-    int y = y0;
+    float coeffA = 1.f - (b.x + b.y) / b.z;
+    float coeffB = b.y / b.z;
+    float coeffC = b.x / b.z;
 
-    for (int x = x0; x <= x1; x++)
-    {
-        if (steep)
-        {
-            image.set(y, x, color);
-        }
-        else
-        {
-            image.set(x, y, color);
-        }
-        err += derr;
-        if (err > dx)
-        {
-            y += (y1 > y0 ? 1 : -1);
-            err -= dx * 2;
-        }
-    }
+    return Vec3f(coeffA, coeffB, coeffC);
 }
 
 void line(Vec2i p0, Vec2i p1, TGAImage &image, TGAColor color)
@@ -69,7 +68,7 @@ void line(Vec2i p0, Vec2i p1, TGAImage &image, TGAColor color)
 
     int dx = p1.x - p0.x;
     int dy = p1.y - p0.y;
-    float derr = std::abs(dy) * 2;
+    float derr = std::abs(dy / float(dx));
     float err = 0;
     int y = p0.y;
 
@@ -84,45 +83,86 @@ void line(Vec2i p0, Vec2i p1, TGAImage &image, TGAColor color)
             image.set(x, y, color);
         }
         err += derr;
-        if (err > dx)
+        if (err > .5)
         {
             y += (p1.y > p0.y ? 1 : -1);
-            err -= dx * 2;
+            err -= 1;
         }
     }
+    return;
 }
 
-void triangle(Vec2i t0, Vec2i t1, Vec2i t2, TGAImage &image, TGAColor color)
+void triangle(Triangle &t, TGAImage &image, TGAColor color)
 {
-    line(t0, t1, image, color);
-    line(t1, t2, image, color);
-    line(t2, t0, image, color);
-    return;
+    std::pair<Vec2i, Vec2i> bbox = get_bbox(t, image);
+    Vec2i bbox_min = bbox.first;
+    Vec2i bbox_max = bbox.second;
+
+    for (int x = bbox_min.x; x <= bbox_max.x; x++)
+    {
+        for (int y = bbox_min.y; y <= bbox_max.y; y++)
+        {
+            Vec2i q = Vec2i(x, y);
+            Vec3f b_coords = barycentric(t, q);
+            if (b_coords.x < 0 || b_coords.y < 0 || b_coords.z < 0)
+            {
+                continue;
+            }
+            else
+            {
+                image.set(x, y, color);
+            }
+        }
+    }
+    // if (t0.y == t1.y && t0.y == t2.y)
+    //     return;
+
+    // // bubble sort -> lower to upper
+    // if (t0.y > t1.y)
+    //     std::swap(t0, t1);
+    // if (t0.y > t2.y)
+    //     std::swap(t0, t2);
+    // if (t1.y > t2.y)
+    //     std::swap(t1, t2);
+
+    // int full_height = t2.y - t0.y;
+
+    // for (int current_y = t0.y; current_y <= t2.y; current_y++)
+    // {
+    //     bool lower = current_y > t1.y - t0.y || t1.y == t0.y;
+    //     int segment_height = lower ? t1.y - t0.y + 1 : t2.y - t1.y + 1;
+
+    //     float d1 = (current_y - t0.y) / float(full_height);
+    //     float d2 = (current_y - (lower ? t0.y : t1.y)) / float(segment_height);
+
+    //     Vec2i s1 = t0 + (t2 - t0) * d1;
+    //     Vec2i s2 = lower ? t0 + (t1 - t0) * d2 : t1 + (t2 - t1) * d2;
+
+    //     if (s1.x > s2.x)
+    //     {
+    //         std::swap(s1, s2);
+    //     }
+
+    //     for (int current_x = s1.x; current_x <= s2.x; current_x++)
+    //     {
+    //         image.set(current_x, current_y, color);
+    //     }
+    // }
+
+    // return;
 }
 
 int main(int argc, char **argv)
 {
-    model = new Model("obj/african_head.obj");
-
     TGAImage image(width, height, TGAImage::RGB);
 
-    for (int i = 0; i < model->nfaces(); i++)
-    {
-        std::vector<int> f = model->face(i);
-        for (int j = 0; j < 3; j++)
-        {
-            Vec3f v0 = model->vert(f[j]);
-            Vec3f v1 = model->vert(f[(j + 1) % 3]);
+    Triangle t0 = {Vec2i(10, 70), Vec2i(50, 160), Vec2i(70, 80)};
+    Triangle t1 = {Vec2i(180, 50), Vec2i(150, 1), Vec2i(70, 180)};
+    Triangle t2 = {Vec2i(180, 150), Vec2i(120, 160), Vec2i(130, 180)};
 
-            int x0 = (v0.x + 1) * 0.5 * width;
-            int y0 = (v0.y + 1) * 0.5 * height;
-
-            int x1 = (v1.x + 1) * 0.5 * width;
-            int y1 = (v1.y + 1) * 0.5 * height;
-
-            line(x0, y0, x1, y1, image, white);
-        }
-    }
+    triangle(t0, image, red);
+    triangle(t1, image, white);
+    triangle(t2, image, green);
 
     image.flip_vertically(); // i want to have the origin at the left bottom corner of the image
     image.write_tga_file("output.tga");

@@ -1,4 +1,4 @@
-SYSCONF_LINK = clang++
+SYSCONF_LINK = clang++ -std=c++11 -g -O0
 CPPFLAGS     =
 LDFLAGS      =
 LIBS         = -lm
