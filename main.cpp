@@ -6,8 +6,8 @@
 #include "tgaimage.h"
 
 const int height = 800, width = 800, depth = 255;
-Vec3f light_dir(0, 0, -1);
-Vec3f camera(0, 0, 3);
+Vec3f light(0, 0, 1);
+Vec3f camera(0, 0, 5);
 Model *model = NULL;
 float **zbuff = NULL;
 
@@ -93,7 +93,7 @@ void line(Vec2i p0, Vec2i p1, TGAImage &image, TGAColor color)
     return;
 }
 
-void triangle(Vec3f *t, TGAImage &image, Vec2f *uvs, float **zbuff, Model *model, float intensity)
+void triangle(Vec3f *t, TGAImage &image, Vec2f *uvs, float **zbuff, Model *model, Vec3f v_lights)
 {
     std::pair<Vec2f, Vec2f> bbox = get_bbox(t, image);
     Vec2f bbox_min = bbox.first;
@@ -119,21 +119,35 @@ void triangle(Vec3f *t, TGAImage &image, Vec2f *uvs, float **zbuff, Model *model
 
                 Vec2f uv_interp = (uvs[0] * b_coords.x) + (uvs[1] * b_coords.y) + (uvs[2] * b_coords.z);
                 Vec2i uv_q = Vec2i(int(uv_interp.x), int(uv_interp.y));
+
+                float light_interp = v_lights * b_coords;
                 TGAColor texture = model->diffuse(uv_q);
-                TGAColor final_color = TGAColor(texture.r * intensity, texture.g * intensity, texture.b * intensity, texture.a * intensity);
+
+                TGAColor final_color = TGAColor(texture.r * light_interp, texture.g * light_interp, texture.b * light_interp, texture.a * light_interp);
                 image.set(x, y, final_color);
             }
         }
     }
 }
 
-float light_intensity(Vec3f *w)
+float flat_shading(Vec3f *w)
 {
     Vec3f v1 = w[2] - w[0];
     Vec3f v2 = w[1] - w[0];
     Vec3f normal = (v1 ^ v2).normalize();
-    float brightness = normal * light_dir;
+    float brightness = normal * light;
     return brightness;
+}
+
+Vec3f gourard_shading(Vec3f *vertices, Vec3f *normals)
+{
+    Vec3f L;
+    for (int i = 0; i < 3; i++)
+    {
+        Vec3f l = light - vertices[i];
+        L[i] = normals[i] * l;
+    }
+    return L;
 }
 
 Vec3f world2screen(Vec3f v)
@@ -195,9 +209,11 @@ int main(int argc, char **argv)
 
     model = new Model("obj/african_head.obj");
 
+    light = light.normalize();
     initialize_zbuffer();
     Matrix projection = perspective_projection();
     // Matrix projection = orthographic_projection();
+
     Matrix viewport = viewport_transform(width / 8, height / 8, width * 3 / 4, height * 3 / 4);
     Matrix scene_transform = viewport * projection;
 
@@ -208,21 +224,19 @@ int main(int argc, char **argv)
         Vec3f t[3];
         Vec3f w[3];
         Vec2f uvs[3];
+        Vec3f intensity; // per vertex intensity
 
         for (int j = 0; j < 3; j++)
         {
             Vec3f vertex = model->vert(f[j]);
             w[j] = vertex;
             t[j] = m2v(scene_transform * v2m(vertex));
-            // t[j] = world2screen(vertex);
+            intensity[j] = std::max(0.f, model->norm(i, j) * light);
             uvs[j] = model->uv(i, j);
         }
 
-        float intensity = light_intensity(w);
-        if (intensity > 0)
-        {
-            triangle(t, image, uvs, zbuff, model, intensity);
-        }
+        // float l = flat_shading(w);
+        triangle(t, image, uvs, zbuff, model, intensity);
     }
 
     image.flip_vertically(); // i want to have the origin at the left bottom corner of the image

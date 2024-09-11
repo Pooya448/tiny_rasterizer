@@ -94,6 +94,12 @@ Vec2f Model::uv(int iface, int nvert)
     return Vec2f(u, v);
 }
 
+Vec3f Model::norm(int iface, int nvert)
+{
+    int idx = faces_[iface][nvert][2];
+    return norms_[idx].normalize();
+}
+
 TGAColor Model::diffuse(Vec2i uv)
 {
     return diffusemap_.get(uv.x, uv.y);
