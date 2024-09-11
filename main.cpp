@@ -93,7 +93,7 @@ void line(Vec2i p0, Vec2i p1, TGAImage &image, TGAColor color)
     return;
 }
 
-void triangle(Vec3f *t, TGAImage &image, TGAColor color, float **zbuff)
+void triangle(Vec3f *t, TGAImage &image, Vec2f *uvs, float **zbuff, Model *model, float intensity)
 {
     std::pair<Vec2f, Vec2f> bbox = get_bbox(t, image);
     Vec2f bbox_min = bbox.first;
@@ -116,7 +116,12 @@ void triangle(Vec3f *t, TGAImage &image, TGAColor color, float **zbuff)
             if (zbuff[x][y] < q.z)
             {
                 zbuff[x][y] = q.z;
-                image.set(x, y, color);
+
+                Vec2f uv_interp = (uvs[0] * b_coords.x) + (uvs[1] * b_coords.y) + (uvs[2] * b_coords.z);
+                Vec2i uv_q = Vec2i(int(uv_interp.x), int(uv_interp.y));
+                TGAColor texture = model->diffuse(uv_q);
+                TGAColor final_color = TGAColor(texture.r * intensity, texture.g * intensity, texture.b * intensity, texture.a * intensity);
+                image.set(x, y, final_color);
             }
         }
     }
@@ -130,6 +135,8 @@ float get_illumination(Vec3f *w, Vec3f light_dir)
     float brightness = normal * light_dir;
     return brightness;
 }
+
+// Vec3f interpolate_color(Vec3f *vts, )
 
 Vec3f world2screen(Vec3f v)
 {
@@ -157,17 +164,22 @@ int main(int argc, char **argv)
 
         Vec3f t[3];
         Vec3f w[3];
+        Vec2f uvs[3];
 
         for (int j = 0; j < 3; j++)
         {
             Vec3f vertex = model->vert(f[j]);
             w[j] = vertex;
             t[j] = world2screen(vertex);
+            uvs[j] = model->uv(i, j);
         }
 
-        float brightness = get_illumination(w, light_dir);
-        TGAColor c = TGAColor(brightness * 255, brightness * 255, brightness * 255, 255);
-        triangle(t, image, c, zbuff);
+        float intensity = get_illumination(w, light_dir);
+        // TGAColor c = TGAColor(intensity * 255, intensity * 255, intensity * 255, 255);
+        if (intensity > 0)
+        {
+            triangle(t, image, uvs, zbuff, model, intensity);
+        }
     }
 
     image.flip_vertically(); // i want to have the origin at the left bottom corner of the image
