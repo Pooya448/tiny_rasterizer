@@ -1,5 +1,6 @@
 #include <vector>
 #include <cmath>
+#include <algorithm>
 #include "model.h"
 #include "geometry.h"
 #include "tgaimage.h"
@@ -7,38 +8,38 @@
 const TGAColor white = TGAColor(255, 255, 255, 255);
 const TGAColor red = TGAColor(255, 0, 0, 255);
 const TGAColor green = TGAColor(0, 255, 0, 255);
-const int height = 200, width = 200;
+const int height = 800, width = 800;
+Model *model = NULL;
 
-typedef std::vector<Vec2i> Triangle;
-
-std::pair<Vec2i, Vec2i> get_bbox(const Triangle &pts, TGAImage &image)
+std::pair<Vec2f, Vec2f> get_bbox(Vec3f *pts, TGAImage &image)
 {
-    Vec2i bbox_min = Vec2i(image.get_width() - 1, image.get_height() - 1);
-    Vec2i bbox_max = Vec2i(0, 0);
-    for (int i = 0; i < pts.size(); i++)
-    {
-        bbox_min.x = std::max(0, std::min(bbox_min.x, pts[i].x));
-        bbox_min.y = std::max(0, std::min(bbox_min.y, pts[i].y));
+    Vec2f bbox_min = Vec2f(std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+    Vec2f bbox_max = Vec2f(-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max());
 
-        bbox_max.x = std::min(image.get_width() - 1, std::max(bbox_max.x, pts[i].x));
-        bbox_max.y = std::min(image.get_height() - 1, std::max(bbox_max.y, pts[i].y));
+    for (int i = 0; i < 3; i++)
+    {
+        bbox_min.x = std::max(0.f, std::min(bbox_min.x, pts[i].x));
+        bbox_min.y = std::max(0.f, std::min(bbox_min.y, pts[i].y));
+
+        bbox_max.x = std::min(float(image.get_width() - 1), std::max(bbox_max.x, pts[i].x));
+        bbox_max.y = std::min(float(image.get_height() - 1), std::max(bbox_max.y, pts[i].y));
     }
 
     return {bbox_min, bbox_max};
 }
 
-Vec3f barycentric(const Triangle &vertices, Vec2i query_pt)
+Vec3f barycentric(Vec3f *vertices, Vec3f query_pt)
 {
-    Vec2i AB = vertices[1] - vertices[0];
-    Vec2i AC = vertices[2] - vertices[0];
-    Vec2i PA = vertices[0] - query_pt;
+    Vec3f AB = vertices[2] - vertices[0];
+    Vec3f AC = vertices[1] - vertices[0];
+    Vec3f PA = vertices[0] - query_pt;
 
-    Vec3f Eq_x = Vec3f(float(AB.x), float(AC.x), float(PA.x));
-    Vec3f Eq_y = Vec3f(float(AB.y), float(AC.y), float(PA.y));
+    Vec3f Eq_x(float(AB.x), float(AC.x), float(PA.x));
+    Vec3f Eq_y(float(AB.y), float(AC.y), float(PA.y));
 
     Vec3f b = Eq_x ^ Eq_y;
 
-    if (std::abs(b.z) < 1)
+    if (std::abs(b.z) < 1e-2)
     {
         return Vec3f(-1, 1, 1);
     }
@@ -92,77 +93,82 @@ void line(Vec2i p0, Vec2i p1, TGAImage &image, TGAColor color)
     return;
 }
 
-void triangle(Triangle &t, TGAImage &image, TGAColor color)
+void triangle(Vec3f *t, TGAImage &image, TGAColor color, float **zbuff)
 {
-    std::pair<Vec2i, Vec2i> bbox = get_bbox(t, image);
-    Vec2i bbox_min = bbox.first;
-    Vec2i bbox_max = bbox.second;
+    std::pair<Vec2f, Vec2f> bbox = get_bbox(t, image);
+    Vec2f bbox_min = bbox.first;
+    Vec2f bbox_max = bbox.second;
 
     for (int x = bbox_min.x; x <= bbox_max.x; x++)
     {
         for (int y = bbox_min.y; y <= bbox_max.y; y++)
         {
-            Vec2i q = Vec2i(x, y);
+            Vec3f q(x, y, 0);
             Vec3f b_coords = barycentric(t, q);
             if (b_coords.x < 0 || b_coords.y < 0 || b_coords.z < 0)
             {
                 continue;
             }
-            else
+            for (int i = 0; i < 3; i++)
             {
+                q.z += t[i].z * b_coords[i];
+            }
+            if (zbuff[x][y] < q.z)
+            {
+                zbuff[x][y] = q.z;
                 image.set(x, y, color);
             }
         }
     }
-    // if (t0.y == t1.y && t0.y == t2.y)
-    //     return;
+}
 
-    // // bubble sort -> lower to upper
-    // if (t0.y > t1.y)
-    //     std::swap(t0, t1);
-    // if (t0.y > t2.y)
-    //     std::swap(t0, t2);
-    // if (t1.y > t2.y)
-    //     std::swap(t1, t2);
+float get_illumination(Vec3f *w, Vec3f light_dir)
+{
+    Vec3f v1 = w[2] - w[0];
+    Vec3f v2 = w[1] - w[0];
+    Vec3f normal = (v1 ^ v2).normalize();
+    float brightness = normal * light_dir;
+    return brightness;
+}
 
-    // int full_height = t2.y - t0.y;
-
-    // for (int current_y = t0.y; current_y <= t2.y; current_y++)
-    // {
-    //     bool lower = current_y > t1.y - t0.y || t1.y == t0.y;
-    //     int segment_height = lower ? t1.y - t0.y + 1 : t2.y - t1.y + 1;
-
-    //     float d1 = (current_y - t0.y) / float(full_height);
-    //     float d2 = (current_y - (lower ? t0.y : t1.y)) / float(segment_height);
-
-    //     Vec2i s1 = t0 + (t2 - t0) * d1;
-    //     Vec2i s2 = lower ? t0 + (t1 - t0) * d2 : t1 + (t2 - t1) * d2;
-
-    //     if (s1.x > s2.x)
-    //     {
-    //         std::swap(s1, s2);
-    //     }
-
-    //     for (int current_x = s1.x; current_x <= s2.x; current_x++)
-    //     {
-    //         image.set(current_x, current_y, color);
-    //     }
-    // }
-
-    // return;
+Vec3f world2screen(Vec3f v)
+{
+    return Vec3f((v.x * 0.5 + 0.5) * width, (v.y * 0.5 + 0.5) * height, v.z);
 }
 
 int main(int argc, char **argv)
 {
     TGAImage image(width, height, TGAImage::RGB);
 
-    Triangle t0 = {Vec2i(10, 70), Vec2i(50, 160), Vec2i(70, 80)};
-    Triangle t1 = {Vec2i(180, 50), Vec2i(150, 1), Vec2i(70, 180)};
-    Triangle t2 = {Vec2i(180, 150), Vec2i(120, 160), Vec2i(130, 180)};
+    model = new Model("obj/african_head.obj");
 
-    triangle(t0, image, red);
-    triangle(t1, image, white);
-    triangle(t2, image, green);
+    float **zbuff = new float *[width];
+    for (int i = 0; i < width; i++)
+    {
+        zbuff[i] = new float[height];
+        std::fill_n(zbuff[i], height, -std::numeric_limits<float>::max());
+    }
+
+    Vec3f light_dir(0, 0, -1);
+
+    for (int i = 0; i < model->nfaces(); i++)
+    {
+        std::vector<int> f = model->face(i);
+
+        Vec3f t[3];
+        Vec3f w[3];
+
+        for (int j = 0; j < 3; j++)
+        {
+            Vec3f vertex = model->vert(f[j]);
+            w[j] = vertex;
+            t[j] = world2screen(vertex);
+        }
+
+        float brightness = get_illumination(w, light_dir);
+        TGAColor c = TGAColor(brightness * 255, brightness * 255, brightness * 255, 255);
+        triangle(t, image, c, zbuff);
+    }
 
     image.flip_vertically(); // i want to have the origin at the left bottom corner of the image
     image.write_tga_file("output.tga");
