@@ -5,11 +5,11 @@
 #include "geometry.h"
 #include "tgaimage.h"
 
-const TGAColor white = TGAColor(255, 255, 255, 255);
-const TGAColor red = TGAColor(255, 0, 0, 255);
-const TGAColor green = TGAColor(0, 255, 0, 255);
-const int height = 800, width = 800;
+const int height = 800, width = 800, depth = 255;
+Vec3f light_dir(0, 0, -1);
+Vec3f camera(0, 0, 3);
 Model *model = NULL;
+float **zbuff = NULL;
 
 std::pair<Vec2f, Vec2f> get_bbox(Vec3f *pts, TGAImage &image)
 {
@@ -127,7 +127,7 @@ void triangle(Vec3f *t, TGAImage &image, Vec2f *uvs, float **zbuff, Model *model
     }
 }
 
-float get_illumination(Vec3f *w, Vec3f light_dir)
+float light_intensity(Vec3f *w)
 {
     Vec3f v1 = w[2] - w[0];
     Vec3f v2 = w[1] - w[0];
@@ -136,27 +136,70 @@ float get_illumination(Vec3f *w, Vec3f light_dir)
     return brightness;
 }
 
-// Vec3f interpolate_color(Vec3f *vts, )
-
 Vec3f world2screen(Vec3f v)
 {
     return Vec3f((v.x * 0.5 + 0.5) * width, (v.y * 0.5 + 0.5) * height, v.z);
 }
 
+void initialize_zbuffer()
+{
+    zbuff = new float *[width];
+    for (int i = 0; i < width; i++)
+    {
+        zbuff[i] = new float[height];
+        std::fill_n(zbuff[i], height, -std::numeric_limits<float>::max());
+    }
+    return;
+}
+
+Vec3f m2v(Matrix m)
+{
+    Vec3f v(m[0][0] / m[3][0], m[1][0] / m[3][0], m[2][0] / m[3][0]);
+    return v;
+}
+Matrix v2m(Vec3f v)
+{
+    Matrix m(4, 1);
+    m[0][0] = v.x;
+    m[1][0] = v.y;
+    m[2][0] = v.z;
+    m[3][0] = 1.f;
+    return m;
+}
+Matrix viewport_transform(int x, int y, int w, int h)
+{
+    Matrix m = Matrix::identity(4);
+    m[0][3] = x + (w / 2.f); // Translate X to the center of the viewport
+    m[1][3] = y + h / 2.f;   // Translate Y to the center of the viewport
+    m[2][3] = depth / 2.f;   // Translate Z to the middle of the depth range
+
+    m[0][0] = w / 2.f;     // Scale X to fit the viewport width
+    m[1][1] = h / 2.f;     // Scale Y to fit the viewport height
+    m[2][2] = depth / 2.f; // Scale Z to fit the depth range
+    return m;
+}
+Matrix perspective_projection()
+{
+    Matrix m = Matrix::identity(4);
+    m[3][2] = -1.f / camera.z;
+    return m;
+}
+Matrix orthographic_projection()
+{
+    Matrix m = Matrix::identity(4);
+    return m;
+}
 int main(int argc, char **argv)
 {
     TGAImage image(width, height, TGAImage::RGB);
 
     model = new Model("obj/african_head.obj");
 
-    float **zbuff = new float *[width];
-    for (int i = 0; i < width; i++)
-    {
-        zbuff[i] = new float[height];
-        std::fill_n(zbuff[i], height, -std::numeric_limits<float>::max());
-    }
-
-    Vec3f light_dir(0, 0, -1);
+    initialize_zbuffer();
+    Matrix projection = perspective_projection();
+    // Matrix projection = orthographic_projection();
+    Matrix viewport = viewport_transform(width / 8, height / 8, width * 3 / 4, height * 3 / 4);
+    Matrix scene_transform = viewport * projection;
 
     for (int i = 0; i < model->nfaces(); i++)
     {
@@ -170,12 +213,12 @@ int main(int argc, char **argv)
         {
             Vec3f vertex = model->vert(f[j]);
             w[j] = vertex;
-            t[j] = world2screen(vertex);
+            t[j] = m2v(scene_transform * v2m(vertex));
+            // t[j] = world2screen(vertex);
             uvs[j] = model->uv(i, j);
         }
 
-        float intensity = get_illumination(w, light_dir);
-        // TGAColor c = TGAColor(intensity * 255, intensity * 255, intensity * 255, 255);
+        float intensity = light_intensity(w);
         if (intensity > 0)
         {
             triangle(t, image, uvs, zbuff, model, intensity);

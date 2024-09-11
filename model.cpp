@@ -22,7 +22,7 @@ Model::Model(const char *filename) : verts_(), faces_()
             iss >> trash;
             Vec3f v;
             for (int i = 0; i < 3; i++)
-                iss >> v.raw[i];
+                iss >> v[i];
             verts_.push_back(v);
         }
         else if (!line.compare(0, 3, "vn "))
